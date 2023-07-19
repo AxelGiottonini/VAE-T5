@@ -1,0 +1,25 @@
+name: vae-t5
+
+channels:
+  - nvidia
+  - pytorch
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - ipython
+  - cuda
+  - cudatoolkit=11.6
+  - pytorch=1.12.0
+  - torchvision=0.13.0
+  - torchaudio=0.12.0
+  - pandas
+  - biopython
+  - mmseqs2
+  - pip:
+    - ipykernel
+    - transformers
+    - matplotlib
+    - seaborn
