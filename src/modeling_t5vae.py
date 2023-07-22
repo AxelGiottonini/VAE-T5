@@ -14,12 +14,23 @@ logger = logging.get_logger(__name__)
 
 @dataclass
 class Seq2SeqVAELMOutput(Seq2SeqLMOutput):
+    mu: Optional[torch.Tensor] = None
+    logvar: Optional[torch.Tensor] = None
+    latent: Optional[torch.Tensor] = None
+    recon: Optional[torch.Tensor] = None
 
-    recon_loss: Optional[torch.FloatTensor] = None
-    kld_loss: Optional[torch.FloatTensor] = None
-    var_loss: Optional[torch.FloatTensor] = None
-    vae_latent_repr: Optional[Tuple[torch.FloatTensor]] = None
-    vae_hidden_states: Optional[Tuple[torch.FloatTensor]] = None
+    #recon_loss: Optional[torch.FloatTensor] = None
+    #kld_loss: Optional[torch.FloatTensor] = None
+    #var_loss: Optional[torch.FloatTensor] = None
+    #vae_latent_repr: Optional[Tuple[torch.FloatTensor]] = None
+    #vae_hidden_states: Optional[Tuple[torch.FloatTensor]] = None
+
+@dataclass
+class VAEOutput():
+    mu: torch.Tensor
+    logvar: torch.Tensor
+    latent: torch.Tensor
+    recon: torch.Tensor
 
 class T5VAEForConditionalGeneration(T5ForConditionalGeneration):
     def __init__(self, config, dims_hidden, dim_latent, p):
@@ -80,7 +91,7 @@ class T5VAEForConditionalGeneration(T5ForConditionalGeneration):
         labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = True,
         return_dict: Optional[bool] = None,
         teacher_forcing: Optional[float] = None
     ) -> Union[Tuple[torch.FloatTensor], Seq2SeqLMOutput]:
@@ -104,13 +115,13 @@ class T5VAEForConditionalGeneration(T5ForConditionalGeneration):
         )
 
         hidden_states = encoder_outputs[0]
-        recon, vae_z, recon_loss, kld_loss, var_loss = self.autoencode(hidden_states, attention_mask)
+        vae_output = self.autoencode(hidden_states, attention_mask)
 
         if teacher_forcing is None:
-            hidden_states = recon
+            hidden_states = vae_output.recon
         else:
             coefficients = torch.rand_like(hidden_states)
-            hidden_states = (coefficients <= teacher_forcing).to(torch.bfloat16)*hidden_states + (coefficients > teacher_forcing).to(torch.bfloat16)*recon
+            hidden_states = (coefficients <= teacher_forcing).to(torch.bfloat16)*hidden_states + (coefficients > teacher_forcing).to(torch.bfloat16)*vae_output.recon
 
         decoder_outputs = self.decode(
             hidden_states,
@@ -129,11 +140,10 @@ class T5VAEForConditionalGeneration(T5ForConditionalGeneration):
             return_dict
         )
         
-        decoder_outputs.recon_loss=recon_loss
-        decoder_outputs.kld_loss=kld_loss
-        decoder_outputs.var_loss=var_loss
-        decoder_outputs.vae_latent_repr=vae_z
-        decoder_outputs.vae_hidden_states=recon
+        decoder_outputs.mu = vae_output.mu
+        decoder_outputs.logvar = vae_output.logvar
+        decoder_outputs.latent = vae_output.latent
+        decoder_outputs.recon=vae_output.recon
 
         return decoder_outputs
 
@@ -150,20 +160,7 @@ class T5VAEForConditionalGeneration(T5ForConditionalGeneration):
         vae_z = vae_eps * vae_std + vae_mu
         recon = self.vae_decoder(vae_z)
 
-        recon_loss_fn = MSELoss(reduction='sum')
-        recon_loss = recon_loss_fn(
-            attention_mask.view(-1, 1) * recon.view(-1, recon.shape[-1]), 
-            attention_mask.view(-1, 1) * hidden_states.view(-1, hidden_states.shape[-1])
-        )
-        recon_loss = recon_loss / attention_mask.sum()
-
-        kld_loss = -0.5 * torch.sum(1 + vae_logvar.view(-1, vae_logvar.shape[-1]) - vae_mu.view(-1, vae_mu.shape[-1]) ** 2 - vae_logvar.view(-1, vae_logvar.shape[-1]).exp(), dim = 1)
-        kld_loss = torch.sum(attention_mask.view(-1) * kld_loss) / attention_mask.sum()
-
-        var_loss = (attention_mask.view(-1, 1) * vae_logvar.view(-1, vae_logvar.shape[-1])).abs().sum(dim=-1)
-        var_loss = torch.sum(var_loss) / attention_mask.sum()
-
-        return recon, vae_z, recon_loss, kld_loss, var_loss
+        return VAEOutput(vae_mu, vae_logvar, vae_z, recon)
 
     def encode(
         self,

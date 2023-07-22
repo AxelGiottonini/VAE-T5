@@ -1,22 +1,23 @@
+from dataclasses import dataclass
+import typing
 import random
 import torch
 import torch.nn.functional as F
 
+@dataclass
 class Tokens():
-    def __init__(self, input_ids, attention_mask):
-        self.input_ids = input_ids
-        self.attention_mask = attention_mask
-
+    input_ids: typing.Optional[torch.Tensor]=torch.empty([0])
+    attention_mask: typing.Optional[torch.Tensor]=torch.empty([0])
+    
     def to(self, *args, **kwargs):
         self.input_ids = self.input_ids.to(*args, **kwargs)
         self.attention_mask = self.attention_mask.to(*args, **kwargs)
         return self
     
+@dataclass 
 class MaskedTokens(Tokens):
-    def __init__(self, masked_input_ids, masked_mask, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.masked_input_ids = masked_input_ids
-        self.masked_mask = masked_mask
+    masked_input_ids: typing.Optional[torch.Tensor]=torch.empty([0])
+    masked_mask: typing.Optional[torch.Tensor]=torch.empty([0])
 
     def to(self, *args, **kwargs):
         super().to(*args, **kwargs)
@@ -36,7 +37,7 @@ def __get_collate_fn__(tokenizer, mask, mask_rate, frag_coef_a=0, frag_coef_b=1,
         input_ids, attention_mask = tokens.input_ids, tokens.attention_mask
 
         if mask:
-            masked_mask = F.dropout(attention_mask.to(torch.float32), (1-mask_rate))
+            masked_mask = torch.empty_like(attention_mask).bernoulli_(mask_rate)
             masked_input_ids = ((1-masked_mask)*input_ids + masked_mask*tokenizer.mask_token_id).to(torch.long)
 
             tokens = MaskedTokens(
