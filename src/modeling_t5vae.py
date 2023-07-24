@@ -1,36 +1,15 @@
 from typing import Optional, Tuple, Union
 
-from dataclasses import dataclass
-
 import torch
 from torch import nn
-from torch.nn import CrossEntropyLoss, MSELoss
+from torch.nn import CrossEntropyLoss
 
 from transformers import T5ForConditionalGeneration
-from transformers.modeling_outputs import BaseModelOutput, Seq2SeqLMOutput
 from transformers.utils import logging
 
+from .outputs import BaseModelOutput, Seq2SeqLMOutput, VAEOutput, Seq2SeqVAELMOutput
+
 logger = logging.get_logger(__name__)
-
-@dataclass
-class Seq2SeqVAELMOutput(Seq2SeqLMOutput):
-    mu: Optional[torch.Tensor] = None
-    logvar: Optional[torch.Tensor] = None
-    latent: Optional[torch.Tensor] = None
-    recon: Optional[torch.Tensor] = None
-
-    #recon_loss: Optional[torch.FloatTensor] = None
-    #kld_loss: Optional[torch.FloatTensor] = None
-    #var_loss: Optional[torch.FloatTensor] = None
-    #vae_latent_repr: Optional[Tuple[torch.FloatTensor]] = None
-    #vae_hidden_states: Optional[Tuple[torch.FloatTensor]] = None
-
-@dataclass
-class VAEOutput():
-    mu: torch.Tensor
-    logvar: torch.Tensor
-    latent: torch.Tensor
-    recon: torch.Tensor
 
 class T5VAEForConditionalGeneration(T5ForConditionalGeneration):
     def __init__(self, config, dims_hidden, dim_latent, p):

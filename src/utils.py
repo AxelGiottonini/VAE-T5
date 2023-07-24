@@ -1,65 +1,13 @@
 import sys
 import os
 import time
-import typing
 import logging
 import torch
-import torch.nn.functional as F
 
 from .cli import summary
-from .modeling_t5vae import Seq2SeqVAELMOutput
+from .loss_fn import loss_fn
 
 ADVERSARIAL_MODES = ["aae"]
-
-def __recon_loss(output:Seq2SeqVAELMOutput):
-    return F.mse_loss(output.recon.view(-1, output.recon.shape[-1]), output.encoder_last_hidden_state.view(-1, output.encoder_last_hidden_state.shape[-1]), reduction="mean")
-
-def __kl_loss(output:Seq2SeqVAELMOutput):
-    return -0.5 * torch.sum(1 + output.logvar - output.mu.pow(2) - output.logvar.exp()) / len(output.mu)
-
-def __logvar_loss(output:Seq2SeqVAELMOutput):
-    return output.logvar.abs().sum(dim=1).mean()
-
-def __adv_loss(output:Seq2SeqVAELMOutput, discriminator, token_wise=False):
-    fake = torch.randn_like(output.latent)
-
-    if token_wise:
-        zeros = torch.empty((output.latent.shape[0], output.latent.shape[1], 2))
-        zeros[:, :, 0] = 1
-        zeros[:, :, 1] = 0
-        zeros = zeros.to(output.latent.device)
-        ones = 1 - zeros
-    else:
-        zeros = torch.empty(len(output.latent), 2)
-        zeros[:, 0] = 1
-        zeros[:, 1] = 0
-        zeros = zeros.to(output.latent.device)
-        ones = 1 - zeros
-
-    loss = F.binary_cross_entropy_with_logits(discriminator(output.latent), zeros)
-    d_loss = F.binary_cross_entropy_with_logits(discriminator(output.latent.detach()), ones)
-    d_loss = d_loss + F.binary_cross_entropy_with_logits(discriminator(fake), zeros)
-
-    return loss, d_loss
-
-def loss_fn(output:Seq2SeqVAELMOutput, discriminator, args):
-    if args["mode"] == "none":
-        return output.loss
-
-    if args["mode"] == "standard":
-        return output.loss + args["f_recon"] * __recon_loss(output)
-    
-    if args["mode"] == "vae":
-        return output.loss + args["f_recon"] * __recon_loss(output) + + args["f_kl"] * __kl_loss(output)
-    
-    if args["mode"] == "aae":
-        adv_loss, d_loss = __adv_loss(output, discriminator, args["token_wise"])
-        return (
-            output.loss + args["f_recon"] * __recon_loss(output) + output.loss * args["f_logvar"] * __logvar_loss(output) + args["f_adv"] * adv_loss,
-            d_loss
-        )
-    
-    raise NotImplementedError()
 
 def __log_epoch(i_epoch, epoch_metrics, metrics, vdl_is_not_none):
     str_metrics = f"Training Loss: {metrics['training/loss/mean'][-1]:.4f}"
@@ -75,11 +23,11 @@ def train_loop(
     args,
     discriminator=None,
     d_optimizer=None,
-    device: torch.device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"), 
-    precision: torch.memory_format=torch.bfloat16,
     save_model: bool=True,
     save_optimizer: bool=True
 ):
+    device = torch.device("cuda:0" if torch.cuda.is_available() and not args["cpu"] else "cpu")
+    precision = getattr(torch, args["precision"])
     n_epochs = args["n_epochs"]
     global_batch_size = args["global_batch_size"]
     local_batch_size = args["local_batch_size"] if args["local_batch_size"] is not None else global_batch_size
@@ -126,7 +74,7 @@ def train_loop(
                     model.train()
                     torch.cuda.empty_cache()
                     for i_batch, batch in enumerate(training_dataloader):
-                        out = step(model, discriminator, batch.to(device))
+                        out = step(model, batch.to(device))
                         loss = loss_fn(out, discriminator, args)
 
                         if args["mode"] in ADVERSARIAL_MODES:
@@ -134,7 +82,6 @@ def train_loop(
                             (d_loss / accumulation_steps).backward()
                         (loss / accumulation_steps).backward()
                         
-
                         if (
                             (i_batch + 1) % accumulation_steps == 0 or 
                             (i_batch + 1) == len(training_dataloader)
